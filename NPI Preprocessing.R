@@ -148,27 +148,8 @@ NPIRegistryPodiatrists %>%
   arrange(desc(`Last Update Year`)) %>% 
   print(n=50)
 
-#Parameters to check for multiple licenses and practice locations
 
 
-#Parameters to ID retirees
-##STRONG/MID/WEAK
-##BASED ON: DEACTIVATION DATE, DEACTIVATION REASON CODE, REACTIVATION DATE, LAST UPDATE DATE, CERTIFICATION DATE, PRIMARY PRACTICE ADDRESS, ENUMERATION DATE, HEALTHCARE PROVIDER TAXONOMY
-
-#Parameters to ID those who left the field
-
-#Parameters to ID the start date
-
-#Parameters to do geocoding
-
-#Parameters to account for fellowships and residencies
-##TAXONOMY CODE, INC. TRAINING-RELATED CODES THAT INCLUDE "RESIDENT/STUDENT/"FELLOW(?)"
-##ORGANIZATION NAME / PRACTICE LOCATION
-##ENUMERATION DATE MAY PREDATE PRACTICE START BY 3-7 YEARS
-
-trainee_codes <- c("390200000X" #Student in an Organized Health Care Education/Training Program
-                   #Others?
-                   )
 
 
 
@@ -240,12 +221,26 @@ NPI_chunk_1_test %>%
 #####################################################################################
 #### Outstanding Issues #############################################################
 #####################################################################################
-#anyone be practicing under an organizational NPI, but not have an individual NPI
+#anyone be practicing under an organizational NPI, but not have an individual NPI?
+#what is the disceprency with update years versus certified years? It will be an issue that we really don't have a good idea of when people leave and enter the population, need much better triangulation
 #set for entry date. Just people entering after a certain date?
 #Capturing people who WERE DPMs, but have new specialties correctly?
 #How to use the `Provider Other Last Name Type Code` field?
 #Seemingly, Code 1: Former Name, 2: Professional Name, 3: Other, 4: Unknown (per ChatGPT). However, I see no 4s, a large number of "5"s, and a huge number of NAs. The NAs are not concerning, the 5s and the absence of 4s are questions though.
+#Implement geocoding. Potentially divide the providers proportionally between locations (e.g., 1/2 a provider in each state)
+#Improve on parameters to account for fellowships and residencies and the fact that enumeration date may predate practice start by 3-5 years. I tried the taxonomy codes, but they don't seem to be present/used. Still worth looking into the organization name and practice locations, to exclude those in known teaching locations. The problem there is that it doesn't give us temporal disaggregation.
+
+trainee_codes <- c("390200000X" #Student in an Organized Health Care Education/Training Program
+                   #Others?
+)
+#Additionally, we don't have true practice start dates for those who predated the 2005-2007 rollout of NPIs. One next step would be to check how many of our podiatrists actually started after that date.
+#We might consider adding in a confidence flag for high/mid/low in terms of the combinations of covariates which might set a start/end/location/etc. coding classifier assignment
+
+
 #Cross reference with PECOS for Medicare enrollment, state licensure boards (CA, NJ, MD, FSMB), or CMS Open Payments, or Medicare utilization fiLES, or National Practitioner Data Bank (NPDB) Public Use File
+#Cross reference with APMA MIPS Registry
+#Cross reference with APMA member data
+#Cross reference with PECOS (sp?)
 
 
 
