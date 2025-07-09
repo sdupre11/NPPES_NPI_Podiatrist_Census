@@ -6,133 +6,147 @@ library(tidyverse)
 #####################################################################################
 #### Data Import#####################################################################
 #####################################################################################
-NPI_chunk_1 <- readRDS("C:/Users/sdupre.APMA/OneDrive - APMA/Desktop/Reference Materials/Data/NPI Registry/processed/NPI_20050523-20250608_chunk_01.rds")
-NPI_chunk_1 %>% 
-  glimpse()
+# Set working folder path
+working_folder <- "C:/Users/sdupre.APMA/OneDrive - APMA/Desktop/Reference Materials/Data/NPI Registry/processed/"
 
+# Get all RDS files in the folder
+file_list <- list.files(path = working_folder, pattern = "\\.rds$", full.names = TRUE)
 
-## Restrict to anyone who has ever used a podiatric Taxonomy code
-podiatristTaxoCodes <- c("213ES0103X", # Foot & Ankle Surgery
-                         "213ES0131X", # Foot Surgery
-                         "213EP1101X", # Primary Podiatric Medicine
-                         "213EP0504X", # Public Medicine
-                         "213ER0200X", # Radiology
-                         "213ES0000X", # Sports Medicine
-                         "213E00000X", # Deactivated, Podiatrist
-                         "213EG0000X" # Deactivated, Podiatrist
-                         #Eliminated the code for Podiatric Assistants: 211D00000X. These are not DPMs.
-                         )
-
-## Classifying those who have moved to foot/ankle-associated orthopod taxonomic codes
-orthopaedicTaxoCodes <- c("207XS0114X", # Adult Reconstructive Orthopaedic Surgery Physician
-                          "207XX0004X", # Orthopaedic Foot and Ankle Surgery Physician
-                          "207XP3100X", # Pediatric Orthopaedic Surgery Physician
-                          "207XX0005X", # Sports Medicine (Orthopaedic Surgery) Physician
-                          ) 
-
-taxonomy_code_cols <- paste0("Healthcare Provider Taxonomy Code_", 1:15)
-
-taxonomy_code_cols <- taxonomy_code_cols[taxonomy_code_cols %in% colnames(NPI_chunk_1)]
-
-
-
-NPI_chunk_1 %>%
-  filter(`Entity Type Code`== 1) %>%
-  filter(!is.na(`Is Sole Proprietor`)) %>% #All cases in the first million records where this field and the `Entity Type Code` field were both NAs were all deactivated nearly-entirely-empty NPI records.
-  filter(First_Podiatrist_Taxonomy_Num <= 2) %>%
+processed_chunks <- function(file) {
+  message("Processing: ", basename(file))
+  
+  temp_df <- readRDS(file)
+  
+  ## Restrict to anyone who has ever used a podiatric Taxonomy code
+  podiatristTaxoCodes <- c("213ES0103X", # Foot & Ankle Surgery
+                           "213ES0131X", # Foot Surgery
+                           "213EP1101X", # Primary Podiatric Medicine
+                           "213EP0504X", # Public Medicine
+                           "213ER0200X", # Radiology
+                           "213ES0000X", # Sports Medicine
+                           "213E00000X", # Deactivated, Podiatrist
+                           "213EG0000X" # Deactivated, Podiatrist
+                           #Eliminated the code for Podiatric Assistants: 211D00000X. These are not DPMs.
+  )
+  
+  ## Classifying those who have moved to foot/ankle-associated orthopod taxonomic codes
+  orthopaedicTaxoCodes <- c("207XS0114X", # Adult Reconstructive Orthopaedic Surgery Physician
+                            "207XX0004X", # Orthopaedic Foot and Ankle Surgery Physician
+                            "207XP3100X", # Pediatric Orthopaedic Surgery Physician
+                            "207XX0005X" # Sports Medicine (Orthopaedic Surgery) Physician
+  ) 
+  
+  taxonomy_code_cols <- paste0("Healthcare Provider Taxonomy Code_", 1:15)
+  
+  taxonomy_code_cols <- taxonomy_code_cols[taxonomy_code_cols %in% colnames(temp_df)]
+  
+  temp_df <- temp_df %>%
+    filter(`Entity Type Code`== 1) %>%
+    filter(!is.na(`Is Sole Proprietor`)) %>% #All cases in the first million records where this field and the `Entity Type Code` field were both NAs were all deactivated nearly-entirely-empty NPI records.
+    mutate(
+      Last_Taxonomy_Code = pmap_chr(
+        select(., all_of(taxonomy_code_cols)),
+        ~ {
+          vals <- c(...)                 # All values across the 15 fields for this row
+          last_val <- tail(na.omit(vals), 1)  # Get the last non-NA value
+          if (length(last_val) == 0) NA_character_ else last_val
+        }
+      ),
+      Last_Taxonomy_Code_Num = pmap_int(
+        select(., all_of(taxonomy_code_cols)),
+        ~ {
+          vals <- c(...)
+          non_na_idxs <- which(!is.na(vals))
+          if (length(non_na_idxs) == 0) NA_integer_ else tail(non_na_idxs, 1)
+        }
+      ),
+      Has_Podiatrist_Taxonomy = pmap_lgl(
+        select(., all_of(taxonomy_code_cols)),
+        ~ any(c(...) %in% podiatristTaxoCodes)
+      ),
+      Has_Podiatrist_Taxonomy = if_else(Has_Podiatrist_Taxonomy, "Yes", "No"),
+      First_Podiatrist_Taxonomy_Num = pmap_int(
+        select(., all_of(taxonomy_code_cols)),
+        ~ {
+          vals <- c(...)
+          match_idxs <- which(vals %in% podiatristTaxoCodes)
+          if (length(match_idxs) == 0) NA_integer_ else match_idxs[1]
+        }
+      ),
+      Last_Podiatrist_Taxonomy_Num = pmap_int(
+        select(., all_of(taxonomy_code_cols)),
+        ~ {
+          vals <- c(...)
+          match_idxs <- which(vals %in% podiatristTaxoCodes)
+          if (length(match_idxs) == 0) NA_integer_ else tail(match_idxs, 1)
+        }
+      ),
+      Left_Profession_Flag = case_when(
+        (Last_Taxonomy_Code_Num - Last_Podiatrist_Taxonomy_Num) > 0 ~ "Yes",
+        TRUE ~ "No"
+      ),
+      Became_Orthopod_Flag = case_when(
+        (Last_Taxonomy_Code %in% orthopaedicTaxoCodes) ~ "Yes",
+        TRUE ~ "No"
+      ),
+      `NPI Deactivation Date` = mdy(`NPI Deactivation Date`),
+      `NPI Deactivation Year` = as.numeric(year(`NPI Deactivation Date`)),
+      `NPI Deactivation Month` = month(`NPI Deactivation Date`),
+      `NPI Reactivation Date` = mdy(`NPI Reactivation Date`),
+      `NPI Reactivation Year` = as.numeric(year(`NPI Reactivation Date`)),
+      `NPI Reactivation Month` = month(`NPI Reactivation Date`),
+      `Provider Enumeration Date` = mdy(`Provider Enumeration Date`),
+      `Provider Enumeration Year` = as.numeric(year(`Provider Enumeration Date`)),
+      `Provider Enumeration Month` = month(`Provider Enumeration Date`),
+      `Last Update Date` = mdy(`Last Update Date`),
+      `Last Update Year` = as.numeric(year(`Last Update Date`)),
+      `Last Update Month` = month(`Last Update Date`),
+      `Certification Date` = mdy(`Certification Date`),
+      `Certification Year` = as.numeric(year(`Certification Date`)),
+      `Certification Month` = month(`Certification Date`),
+      CompletedMonths_LUD = interval(`Provider Enumeration Date`,`Last Update Date`) %/% months(1),
+      CompletedMonths_CD = interval(`Provider Enumeration Date`,`Certification Date`) %/% months(1) 
+    ) %>%
+    filter(Has_Podiatrist_Taxonomy == "Yes") %>%
+    filter(First_Podiatrist_Taxonomy_Num <= 2) %>%
+    mutate(
+      Provider_Status = case_when(
+        (!is.na(`Replacement NPI`)) ~ "CHECK: Non-NA Replacement NPI is present", 
+        ((`Last Update Year` >= 2024 | `Certification Year` >= 2024) & Left_Profession_Flag == "No" & Became_Orthopod_Flag == "No") ~ "Current",
+        (`Last Update Year` < 2024 & Left_Profession_Flag == "No" & Became_Orthopod_Flag == "No") ~ "Retired or Left Medical Field", 
+        (Left_Profession_Flag == "Yes" & Became_Orthopod_Flag == "No") ~ "Changed Medical Fields, Non-Orthopod",
+        (Left_Profession_Flag == "Yes" & Became_Orthopod_Flag == "Yes") ~ "Changed Fields and Became Orthopod",
+        # () ~ "Dead",
+        TRUE ~ "CHECK: TBD"
+      )) %>%
   mutate(
-    Last_Taxonomy_Code = pmap_chr(
-      select(., all_of(taxonomy_code_cols)),
-      ~ {
-        vals <- c(...)                 # All values across the 15 fields for this row
-        last_val <- tail(na.omit(vals), 1)  # Get the last non-NA value
-        if (length(last_val) == 0) NA_character_ else last_val
-      }
-    ),
-    Last_Taxonomy_Code_Num = pmap_int(
-      select(., all_of(taxonomy_code_cols)),
-      ~ {
-        vals <- c(...)
-        non_na_idxs <- which(!is.na(vals))
-        if (length(non_na_idxs) == 0) NA_integer_ else tail(non_na_idxs, 1)
-      }
-    ),
-    Has_Podiatrist_Taxonomy = pmap_lgl(
-      select(., all_of(taxonomy_code_cols)),
-      ~ any(c(...) %in% podiatristTaxoCodes)
-    ),
-    Has_Podiatrist_Taxonomy = if_else(Has_Podiatrist_Taxonomy, "Yes", "No"),
-    First_Podiatrist_Taxonomy_Num = pmap_int(
-      select(., all_of(taxonomy_code_cols)),
-      ~ {
-        vals <- c(...)
-        match_idxs <- which(vals %in% podiatristTaxoCodes)
-        if (length(match_idxs) == 0) NA_integer_ else match_idxs[1]
-      }
-    ),
-    Last_Podiatrist_Taxonomy_Num = pmap_int(
-      select(., all_of(taxonomy_code_cols)),
-      ~ {
-        vals <- c(...)
-        match_idxs <- which(vals %in% podiatristTaxoCodes)
-        if (length(match_idxs) == 0) NA_integer_ else tail(match_idxs, 1)
-      }
-    ),
-    Left_Profession_Flag = case_when(
-      (Last_Taxonomy_Code_Num - Last_Podiatrist_Taxonomy_Num) > 0 ~ "Yes",
-      TRUE ~ "No"
-    ),
-    Became_Orthopod_Flag = case_when(
-      (Last_Taxonomy_Code %in% orthopaedicTaxoCodes) ~ "Yes",
-      TRUE ~ "No"
-    ),
-    `NPI Deactivation Date` = mdy(`NPI Deactivation Date`),
-    `NPI Deactivation Year` = as.numeric(year(`NPI Deactivation Date`)),
-    `NPI Deactivation Month` = month(`NPI Deactivation Date`),
-    `NPI Reactivation Date` = mdy(`NPI Reactivation Date`),
-    `NPI Reactivation Year` = as.numeric(year(`NPI Reactivation Date`)),
-    `NPI Reactivation Month` = month(`NPI Reactivation Date`),
-    `Provider Enumeration Date` = mdy(`Provider Enumeration Date`),
-    `Provider Enumeration Year` = as.numeric(year(`Provider Enumeration Date`)),
-    `Provider Enumeration Month` = month(`Provider Enumeration Date`),
-    `Last Update Date` = mdy(`Last Update Date`),
-    `Last Update Year` = as.numeric(year(`Last Update Date`)),
-    `Last Update Month` = month(`Last Update Date`),
-    `Certification Date` = mdy(`Certification Date`),
-    `Certification Year` = as.numeric(year(`Certification Date`)),
-    `Certification Month` = month(`Certification Date`)
-  ) %>%
-  filter(Has_Podiatrist_Taxonomy == "Yes") %>%
-  mutate(
-    Provider_Status = case_when(
-      () ~ "Current",
-      () ~ "Retired", 
-      () ~ "Changed Fields",
-      (Became_Orthopod_Flag == "Yes") ~ "Changed Fields and Became Orthopod",
-      () ~ "Dead",
-      (!is.na(`Replacement NPI`)) ~ "CHECK: None NA Replacement NPI is present", 
+    NoRecentUpdate = case_when(
+      (`Last Update Year` < 2024 & Left_Profession_Flag == "No" & Became_Orthopod_Flag == "No") ~ "Stale Update", 
+      (`Last Update Year` >= 2024 & Left_Profession_Flag == "No" & Became_Orthopod_Flag == "No") ~ "Recent Update",
       TRUE ~ "CHECK: TBD"
     )) %>%
-  # select(NPI,
-  #        `Provider Last Name (Legal Name)`,
-  #        `Provider First Name`,
-  #        `Provider Middle Name`,
-  #        `Provider Credential Text`,
-  #        `Provider First Line Business Mailing Address`,
-  #        `Provider Second Line Business Mailing Address`,
-  #        `Provider Business Mailing Address City Name` ,
-  #        `Provider Business Mailing Address State Name` ,
-  #        `Provider Business Practice Location Address Postal Code`,
-  #        `Provider Business Practice Location Address Country Code (If outside U.S.)`,
-  #        `Provider Enumeration Date`,
-  #        `Last Update Date`,
-  #        `NPI Deactivation Reason Code`,
-  #        `NPI Deactivation Date`,
-  #        `NPI Deactivation Date`,
-  #        `NPI Reactivation Date`,
-  #        `Provider Sex Code` ,
-  #        `Healthcare Provider Taxonomy Code_1`,
-  #        `Certification Date`)
+  mutate(
+    NoRecentCertification = case_when(
+      (`Certification Year` < 2024 & Left_Profession_Flag == "No" & Became_Orthopod_Flag == "No") ~ "Stale Certification", 
+      (`Certification Year` >= 2024 & Left_Profession_Flag == "No" & Became_Orthopod_Flag == "No") ~ "Recent Certification",
+      TRUE ~ "CHECK: TBD"
+    ))
+      
+        
+    
+  print("completed")
+  return(temp_df)
+
+}
+
+NPIRegistryPodiatrists  <- map_dfr(file_list, processed_chunks)
+
+NPIRegistryPodiatrists %>%
+  group_by(`Certification Year`,
+           `Last Update Year`) %>%
+  tally() %>%
+  arrange(desc(`Last Update Year`)) %>% 
+  print(n=50)
 
 #Parameters to check for multiple licenses and practice locations
 
